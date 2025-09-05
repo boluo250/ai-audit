@@ -15,7 +15,12 @@ from tree_sitter import Language, Parser
 import tree_sitter_solidity as ts_solidity
 import tree_sitter_rust as ts_rust
 import tree_sitter_cpp as ts_cpp
-import tree_sitter_move as ts_move
+try:
+    import tree_sitter_move as ts_move
+    MOVE_AVAILABLE = True
+except ImportError:
+    ts_move = None
+    MOVE_AVAILABLE = False
 import tree_sitter_go as ts_go
 
 from .data_structures import (
@@ -51,6 +56,8 @@ class BaseParser(ABC):
         elif self.language == LanguageType.CPP:
             language = Language(ts_cpp.language())
         elif self.language == LanguageType.MOVE:
+            if not MOVE_AVAILABLE:
+                raise ValueError("Move language parser is not available")
             language = Language(ts_move.language())
         elif self.language == LanguageType.GO:
             language = Language(ts_go.language())

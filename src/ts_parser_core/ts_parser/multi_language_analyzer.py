@@ -30,9 +30,16 @@ class MultiLanguageAnalyzer:
             LanguageType.SOLIDITY: SolidityParser(),
             LanguageType.RUST: RustParser(),
             LanguageType.CPP: CppParser(),
-            LanguageType.MOVE: MoveParser(),
             LanguageType.GO: GoParser(),
         }
+        
+        # 只在Move可用时添加Move解析器
+        try:
+            from .parsers.move_parser import MoveParser, MOVE_AVAILABLE
+            if MOVE_AVAILABLE:
+                self.parsers[LanguageType.MOVE] = MoveParser()
+        except (ImportError, ValueError):
+            print("⚠️ Move解析器不可用，跳过初始化")
         
         print("✅ 使用高级调用树构建器")
         
@@ -41,6 +48,10 @@ class MultiLanguageAnalyzer:
     
     def analyze_code(self, code: str, language: LanguageType, filename: str = "unknown") -> None:
         """分析代码字符串"""
+        if language not in self.parsers:
+            print(f"⚠️ 语言 {language} 的解析器不可用，跳过分析")
+            return
+            
         parser = self.parsers[language]
         parser.parse_code(code, filename)
         self._current_parser = parser
@@ -57,12 +68,20 @@ class MultiLanguageAnalyzer:
                 print(f"无法识别文件类型: {file_path}")
                 return
         
+        if language not in self.parsers:
+            print(f"⚠️ 语言 {language} 的解析器不可用，跳过文件 {file_path}")
+            return
+
         parser = self.parsers[language]
         parser.parse_file(str(file_path))
         self._current_parser = parser
     
     def analyze_directory(self, directory_path: str, language: LanguageType) -> None:
         """分析目录中的所有文件"""
+        if language not in self.parsers:
+            print(f"⚠️ 语言 {language} 的解析器不可用，跳过目录 {directory_path}")
+            return
+            
         parser = self.parsers[language]
         parser.parse_directory(directory_path)
         self._current_parser = parser

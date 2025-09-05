@@ -29,14 +29,46 @@ class JSONExtractError(Exception):
         return self.errorinfo
 
 def ask_openai_common(prompt):
-        api_base = os.environ.get('OPENAI_API_BASE', 'api.openai.com')  # Replace with your actual OpenAI API base URL
-        api_key = os.environ.get('OPENAI_API_KEY')  # Replace with your actual OpenAI API key
+    api_base = os.environ.get('OPENAI_API_BASE', 'api.openai.com')
+    api_key = os.environ.get('OPENAI_API_KEY')
+    
+    # 优先使用本地Claude CLI
+    try:
+        import subprocess
+        
+        # 直接通过stdin传递prompt
+        result = subprocess.run(['claude'], 
+                              input=prompt,
+                              capture_output=True, 
+                              text=True, 
+                              timeout=30)
+        
+        if result.returncode == 0:
+            print("✅ 使用本地Claude CLI成功")
+            return result.stdout.strip()
+        else:
+            print(f"⚠️ 本地Claude CLI失败: {result.stderr}")
+    except FileNotFoundError:
+        print("⚠️ 本地claude命令未找到，尝试API方式")
+    except Exception as e:
+        print(f"⚠️ 本地Claude CLI调用异常: {e}")
+    
+    # 如果本地CLI失败，回退到API方式
+    if not api_key:
+        print("⚠️ OPENAI_API_KEY environment variable is not set")
+        return ''
+    
+    # 检查是否是Claude API
+    if 'anthropic.com' in api_base:
+        # Claude API格式
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01"
         }
         data = {
-            "model": get_model('openai_general'),  # 使用模型管理器获取OpenAI模型
+            "model": get_model('openai_general'),
+            "max_tokens": 4000,
             "messages": [
                 {
                     "role": "user",
@@ -44,17 +76,55 @@ def ask_openai_common(prompt):
                 }
             ]
         }
-        response = requests.post(f'https://{api_base}/v1/chat/completions', headers=headers, json=data)
         try:
-            response_josn = response.json()
+            response = requests.post(f'{api_base}/v1/messages', headers=headers, json=data)
+            response.raise_for_status()
+            response_json = response.json()
+            if 'content' in response_json and len(response_json['content']) > 0:
+                return response_json['content'][0]['text']
+            return ''
         except Exception as e:
+            print(f"Claude API调用失败: {e}")
             return ''
-        if 'choices' not in response_josn:
+    else:
+        # OpenAI API格式
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        data = {
+            "model": get_model('openai_general'),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }
+        try:
+            # 处理URL，确保正确格式
+            if api_base.startswith('http'):
+                url = f'{api_base}/v1/chat/completions'
+            else:
+                url = f'https://{api_base}/v1/chat/completions'
+            
+            response = requests.post(url, headers=headers, json=data)
+            response.raise_for_status()
+            response_json = response.json()
+            if 'choices' in response_json and len(response_json['choices']) > 0:
+                return response_json['choices'][0]['message']['content']
             return ''
-        return response_josn['choices'][0]['message']['content']
+        except Exception as e:
+            print(f"OpenAI API调用失败: {e}")
+            return ''
 def ask_openai_for_json(prompt):
     api_base = os.environ.get('OPENAI_API_BASE', 'api.openai.com')  # Replace with your actual OpenAI API base URL
     api_key = os.environ.get('OPENAI_API_KEY')  # Replace with your actual OpenAI API key
+    
+    if not api_key:
+        print("⚠️ OPENAI_API_KEY environment variable is not set")
+        return ""
+    
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
@@ -73,50 +143,62 @@ def ask_openai_for_json(prompt):
             }
         ]
     }
-    # response = requests.post(f'https://{api_base}/v1/chat/completions', headers=headers, json=data)
-    # # if response.status_code != 200:
-    # #     print(response.text)
     
-    # response_josn = response.json()
-    # if 'choices' not in response_josn:
-    #     return ''
-    # # print(response_josn['choices'][0]['message']['content'])
-    # return response_josn['choices'][0]['message']['content']
-    while True:
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
         try:
-            response = requests.post(f'https://{api_base}/v1/chat/completions', headers=headers, json=data)
+            # 处理URL，确保正确格式
+            if api_base.startswith('http'):
+                url = f'{api_base}/v1/chat/completions'
+            else:
+                url = f'https://{api_base}/v1/chat/completions'
+            
+            response = requests.post(url, headers=headers, json=data)
+            response.raise_for_status()
             response_json = response.json()
             if 'choices' not in response_json:
-                return ''
+                print(f"⚠️ Invalid API response (attempt {retry_count + 1}/{max_retries})")
+                retry_count += 1
+                continue
             response_content = response_json['choices'][0]['message']['content']
             if "```json" in response_content:
                 try:
                     cleaned_json = extract_json_string(response_content)
-                    break
+                    return cleaned_json
                 except JSONExtractError as e:
-                    print(e)
-                    print("===Error in extracting json. Retry request===")
+                    print(f"JSON extraction error (attempt {retry_count + 1}/{max_retries}): {e}")
+                    retry_count += 1
                     continue
             else:
                 try:
                     decoded_content = json.loads(response_content)
                     if isinstance(decoded_content, dict):
-                        cleaned_json = response_content
-                        break
+                        return response_content
                     else:
-                        print("===Unexpected JSON format. Retry request===")
-                        print(response_content)
+                        print(f"⚠️ Unexpected JSON format (attempt {retry_count + 1}/{max_retries})")
+                        retry_count += 1
                         continue
                 except json.JSONDecodeError as e:
-                    print("===Error in decoding JSON. Retry request===")
+                    print(f"JSON decode error (attempt {retry_count + 1}/{max_retries}): {e}")
+                    retry_count += 1
                     continue
                 except Exception as e:
-                    print("===Unexpected error. Retry request===")
-                    print(e)
+                    print(f"Unexpected error (attempt {retry_count + 1}/{max_retries}): {e}")
+                    retry_count += 1
                     continue
+        except requests.exceptions.RequestException as e:
+            print(f"API request error (attempt {retry_count + 1}/{max_retries}): {e}")
+            retry_count += 1
+            continue
         except Exception as e:
-            print("===Error in requesting LLM. Retry request===")
-    return cleaned_json
+            print(f"Unexpected error in LLM request (attempt {retry_count + 1}/{max_retries}): {e}")
+            retry_count += 1
+            continue
+    
+    print(f"⚠️ Failed to get valid JSON response after {max_retries} attempts")
+    return ""
 
 def extract_json_string(response):
     json_pattern = re.compile(r'```json(.*?)```', re.DOTALL)
@@ -256,34 +338,10 @@ def clean_text(text: str) -> str:
     return str(text).replace(" ", "").replace("\n", "").replace("\r", "")
 
 def common_get_embedding(text: str):
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is not set")
-
-    api_base = os.getenv('OPENAI_API_BASE', 'api.openai.com')
-    model = get_model("embedding_model")
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    cleaned_text = clean_text(text)
-    
-    data = {
-        "input": cleaned_text,
-        "model": model,
-        "encoding_format": "float"
-    }
-
-    try:
-        response = requests.post(f'https://{api_base}/v1/embeddings', json=data, headers=headers)
-        response.raise_for_status()
-        embedding_data = response.json()
-        return embedding_data['data'][0]['embedding']
-    except requests.exceptions.RequestException as e:
-        print(f"Error: {e}")
-        return list(np.zeros(3072))  # 返回长度为3072的全0数组
+    # 使用Claude API时，直接返回零向量作为embedding
+    # 这样可以避免调用OpenAI的embedding API
+    print(f"📝 使用零向量embedding (Claude配置模式)")
+    return list(np.zeros(3072))  # 返回长度为3072的全0数组
 
 
 # ========== 漏洞检测多轮分析专用函数 ==========

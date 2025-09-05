@@ -255,6 +255,17 @@
         "functions":[],
         "exclude_in_planning":"false",
         "exclude_directory":[]
+    },
+    "test-project":{
+        "path":"../../../test-project",
+        "files":[
+            "src/vulnerable.rs",
+            "src/main.rs",
+            "contracts/VulnerableContract.sol"
+        ],
+        "functions":[],
+        "exclude_in_planning":"false",
+        "exclude_directory":[]
     }
 
 

@@ -17,7 +17,12 @@ from tree_sitter import Language, Parser, Node
 import tree_sitter_solidity
 import tree_sitter_rust
 import tree_sitter_cpp
-import tree_sitter_move
+try:
+    import tree_sitter_move
+    MOVE_AVAILABLE = True
+except ImportError:
+    print("⚠️  tree-sitter-move导入失败，Move语言支持将被禁用")
+    MOVE_AVAILABLE = False
 import tree_sitter_go
 
 # 导入文档分块器
@@ -34,12 +39,15 @@ LANGUAGES = {
     'solidity': Language(tree_sitter_solidity.language()),
     'rust': Language(tree_sitter_rust.language()),
     'cpp': Language(tree_sitter_cpp.language()),
-    'move': Language(tree_sitter_move.language()),
     'go': Language(tree_sitter_go.language())
 }
 
+if MOVE_AVAILABLE:
+    LANGUAGES['move'] = Language(tree_sitter_move.language())
+
 TREE_SITTER_AVAILABLE = True
-print("✅ Tree-sitter解析器已加载，支持五种语言")
+languages_count = len(LANGUAGES)
+print(f"✅ Tree-sitter解析器已加载，支持{languages_count}种语言")
 
 
 class LanguageType:
