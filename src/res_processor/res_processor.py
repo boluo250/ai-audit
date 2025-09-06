@@ -269,52 +269,52 @@ class ResProcessor:
         
         print(f"分类完成: {len(groups)} 个输入分组 -> {len(classified_groups)} 个分类后分组")
         
-        # 步骤2：对分类后的组进行去重处理（每组只保留第一个漏洞）
-        print(f"\n步骤2: 开始去重处理...")
-        deduplicated_results = []
+        # # 步骤2：对分类后的组进行去重处理（每组只保留第一个漏洞）
+        # print(f"\n步骤2: 开始去重处理...")
+        # deduplicated_results = []
         
-        for i, group in enumerate(classified_groups):
-            # 输入验证：确保group是DataFrame
-            if not isinstance(group, pd.DataFrame):
-                print(f"  分组 {i+1}: ⚠️  输入不是DataFrame，类型: {type(group)}")
-                if isinstance(group, dict):
-                    # 如果是单个字典，直接保留
-                    print(f"  分组 {i+1}: 单个字典，直接保留")
-                    deduplicated_results.append(group)
-                    continue
-                elif isinstance(group, list):
-                    # 如果是字典列表，转换为DataFrame
-                    group = pd.DataFrame(group)
-                else:
-                    print(f"  分组 {i+1}: ❌ 无法处理的输入类型，跳过")
-                    continue
+        # for i, group in enumerate(classified_groups):
+        #     # 输入验证：确保group是DataFrame
+        #     if not isinstance(group, pd.DataFrame):
+        #         print(f"  分组 {i+1}: ⚠️  输入不是DataFrame，类型: {type(group)}")
+        #         if isinstance(group, dict):
+        #             # 如果是单个字典，直接保留
+        #             print(f"  分组 {i+1}: 单个字典，直接保留")
+        #             deduplicated_results.append(group)
+        #             continue
+        #         elif isinstance(group, list):
+        #             # 如果是字典列表，转换为DataFrame
+        #             group = pd.DataFrame(group)
+        #         else:
+        #             print(f"  分组 {i+1}: ❌ 无法处理的输入类型，跳过")
+        #             continue
             
-            if len(group) <= 1:
-                # 单个漏洞，直接保留
-                print(f"  分组 {i+1}: 单个漏洞，直接保留")
-                preserved_vuln = group.iloc[0].to_dict()
-                deduplicated_results.append(preserved_vuln)
-            else:
-                # 多个漏洞，只保留第一个
-                first_vuln = group.iloc[0]
-                removed_count = len(group) - 1
-                print(f"  分组 {i+1}: {len(group)} 个漏洞 -> 保留第1个，删除 {removed_count} 个重复项")
+        #     if len(group) <= 1:
+        #         # 单个漏洞，直接保留
+        #         print(f"  分组 {i+1}: 单个漏洞，直接保留")
+        #         preserved_vuln = group.iloc[0].to_dict()
+        #         deduplicated_results.append(preserved_vuln)
+        #     else:
+        #         # 多个漏洞，只保留第一个
+        #         first_vuln = group.iloc[0]
+        #         removed_count = len(group) - 1
+        #         print(f"  分组 {i+1}: {len(group)} 个漏洞 -> 保留第1个，删除 {removed_count} 个重复项")
                 
-                # 记录被删除的漏洞ID
-                removed_ids = [str(row['ID']) for _, row in group.iloc[1:].iterrows()]
-                print(f"    删除的漏洞ID: {', '.join(removed_ids)}")
-                print(f"    保留的漏洞ID: {first_vuln['ID']}")
+        #         # 记录被删除的漏洞ID
+        #         removed_ids = [str(row['ID']) for _, row in group.iloc[1:].iterrows()]
+        #         print(f"    删除的漏洞ID: {', '.join(removed_ids)}")
+        #         print(f"    保留的漏洞ID: {first_vuln['ID']}")
                 
-                preserved_vuln = first_vuln.to_dict()
-                deduplicated_results.append(preserved_vuln)
+        #         preserved_vuln = first_vuln.to_dict()
+        #         deduplicated_results.append(preserved_vuln)
         
-        print(f"去重完成: {len(classified_groups)} 个分类后分组 -> {len(deduplicated_results)} 个去重后结果")
+        # print(f"去重完成: {len(classified_groups)} 个分类后分组 -> {len(deduplicated_results)} 个去重后结果")
         
-        # 统计去重效果
-        original_total = sum(len(group) for group in classified_groups)
-        final_total = len(deduplicated_results)
-        removed_total = original_total - final_total
-        print(f"去重统计: 原始 {original_total} 个漏洞 -> 最终 {final_total} 个漏洞，删除了 {removed_total} 个重复项")
+        # # 统计去重效果
+        # original_total = sum(len(group) for group in classified_groups)
+        # final_total = len(deduplicated_results)
+        # removed_total = original_total - final_total
+        # print(f"去重统计: 原始 {original_total} 个漏洞 -> 最终 {final_total} 个漏洞，删除了 {removed_total} 个重复项")
         
         # 检查是否需要提前停止
         if final_total < 40:
