@@ -8,11 +8,13 @@ import math
 import re
 import time
 import os
+from logging_config import log_step, log_section_start, log_section_end, log_error, log_warning, log_success, log_data_info
+import logging
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 class ResProcessor:
-    def __init__(self, df, max_group_size=10, iteration_rounds=2, enable_chinese_translation=False):
+    def __init__(self, df, max_group_size=10, iteration_rounds=2, enable_chinese_translation=False, logger=None):
         """
         初始化ResProcessor
         
@@ -21,36 +23,102 @@ class ResProcessor:
             max_group_size: 每组最大漏洞数量，默认为10
             iteration_rounds: 迭代轮数，默认为2
             enable_chinese_translation: 是否启用中文翻译，默认为False
+            logger: 可选的日志记录器
         """
         self.df = df
         self.lock = Lock()
         self.max_group_size = max_group_size
         self.iteration_rounds = iteration_rounds
         self.enable_chinese_translation = enable_chinese_translation
+        self.logger = logger or logging.getLogger(__name__)
         
         print(f"ResProcessor初始化:")
         print(f"  - 最大组大小: {self.max_group_size}")
         print(f"  - 迭代轮数: {self.iteration_rounds}")
         print(f"  - 中文翻译: {'启用' if self.enable_chinese_translation else '禁用'}")
+        
+        # 记录日志
+        if self.logger:
+            log_data_info(self.logger, "ResProcessor最大组大小", self.max_group_size)
+            log_data_info(self.logger, "ResProcessor迭代轮数", self.iteration_rounds)
+            log_data_info(self.logger, "ResProcessor中文翻译", "启用" if self.enable_chinese_translation else "禁用")
 
     def process(self):
         """主处理函数，实现多轮迭代的漏洞归集"""
-        print("开始漏洞归集处理...")
-        print(f"总漏洞数量: {len(self.df)}")
+        print("\n" + "="*60)
+        print("🚀 开始漏洞归集处理...")
+        print("="*60)
+        
+        # 记录开始日志
+        if self.logger:
+            log_section_start(self.logger, "ResProcessor漏洞归集处理")
+        
+        # 详细的初始数据统计
+        print(f"📊 输入数据统计:")
+        print(f"   总漏洞数量: {len(self.df)}")
+        print(f"   数据列数: {len(self.df.columns)}")
+        
+        # 记录初始数据日志
+        if self.logger:
+            log_data_info(self.logger, "ResProcessor输入漏洞总数", len(self.df))
+            log_data_info(self.logger, "ResProcessor输入数据列数", len(self.df.columns))
+        
+        # 分析关键字段
+        print(f"\n🔍 数据分析:")
+        unique_funcs = self.df['函数名称'].nunique()
+        unique_codes = self.df['业务流程代码'].nunique()
+        print(f"   不同函数数量: {unique_funcs}")
+        print(f"   不同业务流程代码数量: {unique_codes}")
+        
+        # 记录分析数据日志
+        if self.logger:
+            log_data_info(self.logger, "ResProcessor不同函数数量", unique_funcs)
+            log_data_info(self.logger, "ResProcessor不同业务流程代码数量", unique_codes)
+        
+        if '规则类型' in self.df.columns:
+            unique_rules = self.df['规则类型'].nunique()
+            print(f"   不同规则类型数量: {unique_rules}")
+            if self.logger:
+                log_data_info(self.logger, "ResProcessor不同规则类型数量", unique_rules)
+        
+        # 显示每个函数的漏洞分布
+        func_counts = self.df['函数名称'].value_counts()
+        print(f"\n🎯 各函数漏洞分布 (共{len(func_counts)}个函数):")
+        for i, (func_name, count) in enumerate(func_counts.head(10).items(), 1):
+            print(f"   {i:2d}. {func_name}: {count} 个漏洞")
+        if len(func_counts) > 10:
+            print(f"   ... 还有 {len(func_counts) - 10} 个函数")
+        
+        # 记录函数分布日志
+        if self.logger:
+            func_dist_str = ", ".join([f"{name}:{count}" for name, count in func_counts.head(5).items()])
+            log_data_info(self.logger, "ResProcessor函数漏洞分布(前5)", func_dist_str)
+            
+        print(f"\n" + "="*60)
         
         # 添加辅助列
         self.df['flow_code_len'] = self.df['业务流程代码'].str.len()
         
-        # 第一步：按业务流程代码分组
-        initial_groups = list(self.df.groupby('业务流程代码'))
+        # 第一步：按业务流程代码+函数名分组（避免不同函数的相同代码被过度合并）
+        initial_groups = list(self.df.groupby(['业务流程代码', '函数名称']))
         print(f"初始分组数量: {len(initial_groups)}")
         
         # 打印初始分组详情
         print("\n=== 初始分组详情 ===")
-        for i, (flow_code, group) in enumerate(initial_groups):
+        for i, ((flow_code, func_name), group) in enumerate(initial_groups):
             flow_code_preview = flow_code[:100] + "..." if len(flow_code) > 100 else flow_code
-            print(f"分组 {i+1}: 业务流程代码长度={len(flow_code)}, 漏洞数量={len(group)}")
+            print(f"分组 {i+1}: 函数名={func_name}, 业务流程代码长度={len(flow_code)}, 漏洞数量={len(group)}")
             print(f"  代码预览: {flow_code_preview}")
+            if self.logger:
+                log_data_info(
+                    self.logger,
+                    f"初始分组{i+1}",
+                    {
+                        "函数名": func_name,
+                        "代码长度": len(flow_code),
+                        "漏洞数量": len(group),
+                    }
+                )
             if len(group) > self.max_group_size:
                 print(f"  ⚠️  该分组超过最大限制({self.max_group_size})，需要细分")
         
@@ -113,8 +181,8 @@ class ResProcessor:
         # 使用多线程处理大组细分
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             future_to_group = {
-                executor.submit(self._process_single_group, i, flow_code, group): (i, flow_code, group)
-                for i, (flow_code, group) in enumerate(initial_groups)
+                executor.submit(self._process_single_group, i, (flow_code, func_name), group): (i, (flow_code, func_name), group)
+                for i, ((flow_code, func_name), group) in enumerate(initial_groups)
             }
             
             with tqdm(total=len(initial_groups), desc="细分大组") as pbar:
@@ -123,7 +191,7 @@ class ResProcessor:
                         subgroups = future.result()
                         refined_groups.extend(subgroups)
                     except Exception as e:
-                        i, flow_code, group = future_to_group[future]
+                        i, (flow_code, func_name), group = future_to_group[future]
                         print(f"分组 {i+1} 细分失败: {str(e)}")
                         refined_groups.append(group)
                     pbar.update(1)
@@ -131,17 +199,25 @@ class ResProcessor:
         print(f"细分完成: {len(initial_groups)} 个初始分组 -> {len(refined_groups)} 个细分后分组")
         return refined_groups
 
-    def _process_single_group(self, index, flow_code, group):
+    def _process_single_group(self, index, group_key, group):
         """处理单个分组的细分"""
+        # 兼容处理：如果group_key是元组则解包，否则保持原有逻辑
+        if isinstance(group_key, tuple) and len(group_key) == 2:
+            flow_code, func_name = group_key
+            group_desc = f"函数: {func_name}"
+        else:
+            flow_code = group_key
+            group_desc = "业务流程代码"
+            
         if len(group) <= self.max_group_size:
             flow_code_preview = flow_code[:50] + "..." if len(flow_code) > 50 else flow_code
-            print(f"分组 {index+1} (业务流程代码: {flow_code_preview}): 大小 {len(group)} <= {self.max_group_size}，无需细分")
+            print(f"分组 {index+1} ({group_desc}: {flow_code_preview}): 大小 {len(group)} <= {self.max_group_size}，无需细分")
             return [group]
         else:
             # 将大组拆分为小组
             num_subgroups = math.ceil(len(group) / self.max_group_size)
             flow_code_preview = flow_code[:50] + "..." if len(flow_code) > 50 else flow_code
-            print(f"分组 {index+1} (业务流程代码: {flow_code_preview}): 大小 {len(group)} > {self.max_group_size}，需要拆分为 {num_subgroups} 个子组")
+            print(f"分组 {index+1} ({group_desc}: {flow_code_preview}): 大小 {len(group)} > {self.max_group_size}，需要拆分为 {num_subgroups} 个子组")
             
             group_list = group.to_dict('records')
             subgroups = []
@@ -828,7 +904,7 @@ class ResProcessor:
             
             # 使用ResProcessor进行去重
             log_step(logger, "开始ResProcessor去重处理")
-            res_processor = ResProcessor(original_df, max_group_size=5, iteration_rounds=8, enable_chinese_translation=False)
+            res_processor = ResProcessor(original_df, max_group_size=5, iteration_rounds=8, enable_chinese_translation=False, logger=logger)
             processed_df = res_processor.process()
             
             deduplicated_count = len(processed_df)
@@ -935,12 +1011,25 @@ class ResProcessor:
                     '推荐': entity.recommendation
                 })
         
+        # 统计有效记录的函数名
+        valid_func_names = set()
+        for entity in entities:
+            if getattr(entity, 'short_result', '') != 'delete':
+                valid_func_names.add(entity.name)
+        
         # 打印数据统计信息
         print(f"\n📊 Excel报告数据统计:")
         print(f"   总记录数: {total_entities}")
         print(f"   逻辑删除的记录数: {deleted_entities}")
         print(f"   有效记录数: {total_entities - deleted_entities}")
+        print(f"   有效记录涉及函数: {sorted(valid_func_names)}")
         print(f"   符合条件的漏洞记录数: {len(data)}")
+        
+        # 记录日志
+        logger = logging.getLogger(__name__)
+        log_data_info(logger, "Excel报告有效记录数", total_entities - deleted_entities)
+        func_list_str = ", ".join(sorted(valid_func_names))
+        log_data_info(logger, "Excel报告有效记录涉及函数", func_list_str)
         
         # 将数据转换为DataFrame
         if not data:  # 检查是否有数据
@@ -949,9 +1038,35 @@ class ResProcessor:
             
         df = pd.DataFrame(data)
         
+        # 添加详细的数据分析统计
+        print(f"\n🔍 ResProcessor数据分析:")
+        print(f"   初始DataFrame记录数: {len(df)}")
+        print(f"   数据列数: {len(df.columns)}")
+        
+        # 统计各列的数据情况
+        print(f"\n📊 关键字段统计:")
+        print(f"   函数名称: {df['函数名称'].nunique()} 个不同函数")
+        print(f"   业务流程代码: {df['业务流程代码'].nunique()} 个不同代码段")
+        print(f"   规则类型: {df['规则类型'].nunique()} 种规则类型")
+        
+        # 显示函数名称分布
+        func_counts = df['函数名称'].value_counts()
+        print(f"\n🎯 每个函数的漏洞数量分布:")
+        for func_name, count in func_counts.items():
+            print(f"   {func_name}: {count} 个漏洞")
+        
+        # 显示规则类型分布
+        rule_counts = df['规则类型'].value_counts()
+        print(f"\n📋 规则类型分布:")
+        for rule_type, count in rule_counts.items():
+            print(f"   {rule_type}: {count} 个漏洞")
+            
+        print(f"\n" + "="*60)
+        
         try:
-            # 对df进行漏洞归集处理
-            res_processor = ResProcessor(df, max_group_size=5, iteration_rounds=5, enable_chinese_translation=True)
+            # 对df进行漏洞归集处理，传递logger参数
+            logger = logging.getLogger(__name__)
+            res_processor = ResProcessor(df, max_group_size=5, iteration_rounds=5, enable_chinese_translation=True, logger=logger)
             processed_df = res_processor.process()
             
             # 确保所有必需的列都存在
