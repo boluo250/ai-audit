@@ -46,7 +46,8 @@ try:
     except ImportError:
         MOVE_AVAILABLE = False
     
-    COMPLEXITY_ANALYSIS_ENABLED = True
+    # 从环境变量读取复杂度分析配置，默认为True
+    COMPLEXITY_ANALYSIS_ENABLED = os.getenv('COMPLEXITY_ANALYSIS_ENABLED', 'True').lower() == 'true'
 except ImportError:
     print("⚠️ Tree-sitter模块未安装，复杂度过滤功能将被禁用")
     COMPLEXITY_ANALYSIS_ENABLED = False
