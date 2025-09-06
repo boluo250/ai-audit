@@ -1,5 +1,6 @@
 import argparse
 import ast
+import gc
 import os
 import sys
 import time
@@ -7,12 +8,9 @@ from ai_engine import *
 from tree_sitter_parsing import TreeSitterProjectAudit as ProjectAudit
 from dataset_manager import load_dataset, Project
 from planning.planning import Planning
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, pool
 from dao import CacheManager, ProjectTaskMgr
 import os
-import pandas as pd
-from openpyxl import Workbook,load_workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
 from res_processor.res_processor import ResProcessor
 
 import dotenv
@@ -20,6 +18,30 @@ dotenv.load_dotenv()
 
 # 添加日志系统
 from logging_config import setup_logging, get_logger, log_section_start, log_section_end, log_step, log_error, log_warning, log_success, log_data_info
+
+# 内存优化：延迟加载重量级库
+def lazy_import_pandas():
+    """延迟导入pandas"""
+    import pandas as pd
+    return pd
+
+def lazy_import_openpyxl():
+    """延迟导入openpyxl"""
+    from openpyxl import Workbook,load_workbook
+    from openpyxl.utils.dataframe import dataframe_to_rows
+    return Workbook, load_workbook, dataframe_to_rows
+
+# 内存管理工具函数
+def force_garbage_collection():
+    """强制垃圾回收"""
+    collected = gc.collect()
+    return collected
+
+def get_memory_usage():
+    """获取当前内存使用情况"""
+    import psutil
+    process = psutil.Process()
+    return process.memory_info().rss / 1024 / 1024  # MB
 
 
 
@@ -29,12 +51,21 @@ def scan_project(project, db_engine):
     
     log_section_start(logger, "项目扫描", f"项目ID: {project.id}, 路径: {project.path}")
     
+    # 记录初始内存使用
+    initial_memory = get_memory_usage()
+    logger.info(f"扫描开始时内存使用: {initial_memory:.1f}MB")
+    
     # 1. parsing projects  
     log_step(logger, "Tree-sitter解析项目", f"项目路径: {project.path}")
     parsing_start = time.time()
     
     project_audit = ProjectAudit(project.id, project.path, db_engine)
     project_audit.parse()
+    
+    # 解析后清理内存
+    collected = force_garbage_collection()
+    current_memory = get_memory_usage()
+    logger.info(f"解析后内存: {current_memory:.1f}MB, 回收了 {collected} 个对象")
     
     parsing_duration = time.time() - parsing_start
     log_success(logger, "项目解析完成", f"耗时: {parsing_duration:.2f}秒")
@@ -175,21 +206,45 @@ if __name__ == '__main__':
         
         start_time = time.time()
         
-        # 初始化数据库
+        # 初始化数据库连接池，限制连接数
         log_step(main_logger, "初始化数据库连接")
         db_url_from = os.environ.get("DATABASE_URL")
         main_logger.info(f"数据库URL: {db_url_from}")
-        engine = create_engine(db_url_from)
+        
+        # 使用连接池限制并发连接数
+        engine = create_engine(
+            db_url_from,
+            poolclass=pool.QueuePool,
+            pool_size=2,        # 最大连接数
+            max_overflow=0,     # 不允许额外连接
+            pool_recycle=300,   # 连接5分钟后回收
+            pool_pre_ping=True  # 连接前检查可用性
+        )
         log_success(main_logger, "数据库连接创建完成")
+        
+        # 初始内存使用记录
+        initial_memory = get_memory_usage()
+        main_logger.info(f"程序启动时内存使用: {initial_memory:.1f}MB")
         
         # 设置项目参数
         project_id = 'test-project'  # 使用测试项目ID
         main_logger.info(f"目标项目ID: {project_id}")
         
-        # 直接生成Excel报告
-        log_step(main_logger, "直接使用ResProcessor生成Excel报告")
+        # 生成Excel报告 - 延迟加载pandas和openpyxl
+        log_step(main_logger, "生成Excel报告")
         excel_start = time.time()
+        
+        # 只在需要时导入重量级库
+        pd = lazy_import_pandas()
+        Workbook, load_workbook, dataframe_to_rows = lazy_import_openpyxl()
+        
         ResProcessor.generate_excel("./output_direct.xlsx", project_id, engine)
+        
+        # Excel生成后清理内存
+        collected = force_garbage_collection()
+        current_memory = get_memory_usage()
+        main_logger.info(f"Excel生成后内存: {current_memory:.1f}MB, 回收了 {collected} 个对象")
+        
         excel_duration = time.time() - excel_start
         log_success(main_logger, "Excel报告生成完成", f"耗时: {excel_duration:.2f}秒, 文件: ./output_direct.xlsx")
         
@@ -201,12 +256,25 @@ if __name__ == '__main__':
         
         start_time=time.time()
         
-        # 初始化数据库
+        # 初始化数据库连接池，限制连接数
         log_step(main_logger, "初始化数据库连接")
         db_url_from = os.environ.get("DATABASE_URL")
         main_logger.info(f"数据库URL: {db_url_from}")
-        engine = create_engine(db_url_from)
+        
+        # 使用连接池限制并发连接数
+        engine = create_engine(
+            db_url_from,
+            poolclass=pool.QueuePool,
+            pool_size=2,        # 最大连接数
+            max_overflow=0,     # 不允许额外连接
+            pool_recycle=300,   # 连接5分钟后回收
+            pool_pre_ping=True  # 连接前检查可用性
+        )
         log_success(main_logger, "数据库连接创建完成")
+        
+        # 初始内存使用记录
+        initial_memory = get_memory_usage()
+        main_logger.info(f"程序启动时内存使用: {initial_memory:.1f}MB")
         
         # 加载数据集
         log_step(main_logger, "加载数据集")

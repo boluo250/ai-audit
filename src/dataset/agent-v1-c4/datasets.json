@@ -259,8 +259,6 @@
     "test-project":{
         "path":"../../../test-project",
         "files":[
-            "src/vulnerable.rs",
-            "src/main.rs",
             "contracts/VulnerableContract.sol"
         ],
         "functions":[],

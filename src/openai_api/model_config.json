@@ -1,17 +1,12 @@
 {
-      "openai_general": "claude-4-sonnet",
-      "code_assumptions_analysis": "claude-4-sonnet",
-      "vulnerability_detection": "claude-4-sonnet",
-      "initial_vulnerability_validation": "claude-4-sonnet",
-      "vulnerability_findings_json_extraction":
-  "claude-4-sonnet",
-      "additional_context_determination":
-  "claude-4-sonnet",
-      "comprehensive_vulnerability_analysis":
-  "claude-4-sonnet",
-      "final_vulnerability_extraction":
-  "claude-4-sonnet",
-      "structured_json_extraction":
-  "claude-4-sonnet",
-      "embedding_model": "text-embedding-3-large"
-  }
+    "openai_general": "deepseek-chat",
+    "code_assumptions_analysis": "deepseek-chat",
+    "vulnerability_detection": "deepseek-reasoner",
+    "initial_vulnerability_validation": "deepseek-chat",
+    "vulnerability_findings_json_extraction": "deepseek-chat",
+    "additional_context_determination": "deepseek-chat",
+    "comprehensive_vulnerability_analysis": "deepseek-reasoner",
+    "final_vulnerability_extraction": "deepseek-chat",
+    "structured_json_extraction": "deepseek-chat",
+    "embedding_model": "text-embedding-3-large"
+}
