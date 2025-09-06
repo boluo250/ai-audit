@@ -73,93 +73,93 @@ class RAGProcessor:
 
         self._create_all_databases()
     
- def _get_embedding_dimension(self):
-    """获取embedding维度"""
-    try:
-        from openai_api.openai import get_embedding_model
-        model, _ = get_embedding_model()
-        return model.config.hidden_size
-    except Exception as e:
-        print(f"⚠️ 无法获取embedding维度，使用默认值: {e}")
-        return 384  # 默认维度
+    def _get_embedding_dimension(self):
+        """获取embedding维度"""
+        try:
+            from openai_api.openai import get_embedding_model
+            model, _ = get_embedding_model()
+            return model.config.hidden_size
+        except Exception as e:
+            print(f"⚠️ 无法获取embedding维度，使用默认值: {e}")
+            return 384  # 默认维度
 
-def _create_schemas(self):
-    """创建三个表的schemas"""
-    
-    # 获取embedding维度
-    embedding_dim = self._get_embedding_dimension()
-    print(f" 使用embedding维度: {embedding_dim}")
-    
-    # 函数级别表schema（包含3种embedding）
-    self.schema_function = pa.schema([
-        # 基本标识字段
-        pa.field("id", pa.string()),
-        pa.field("name", pa.string()),
+    def _create_schemas(self):
+        """创建三个表的schemas"""
         
-        # 3种embedding字段 - 使用动态维度
-        pa.field("content_embedding", pa.list_(pa.float32(), embedding_dim)),
-        pa.field("name_embedding", pa.list_(pa.float32(), embedding_dim)),
-        pa.field("natural_embedding", pa.list_(pa.float32(), embedding_dim)),
+        # 获取embedding维度
+        embedding_dim = self._get_embedding_dimension()
+        print(f" 使用embedding维度: {embedding_dim}")
         
-        # 函数完整metadata（基于functions_to_check的字段）
-        pa.field("content", pa.string()),
-        pa.field("natural_description", pa.string()),
-        pa.field("start_line", pa.int32()),
-        pa.field("end_line", pa.int32()),
-        pa.field("relative_file_path", pa.string()),
-        pa.field("absolute_file_path", pa.string()),
-        pa.field("contract_name", pa.string()),
-        pa.field("contract_code", pa.string()),
-        pa.field("modifiers", pa.list_(pa.string())),
-        pa.field("visibility", pa.string()),
-        pa.field("state_mutability", pa.string()),
-        pa.field("function_name_only", pa.string()),
-        pa.field("full_name", pa.string())
-    ])
-    
-    # 文件级别表schema（包含2种embedding）
-    self.schema_file = pa.schema([
-        # 基本标识字段
-        pa.field("id", pa.string()),
-        pa.field("file_path", pa.string()),
+        # 函数级别表schema（包含3种embedding）
+        self.schema_function = pa.schema([
+            # 基本标识字段
+            pa.field("id", pa.string()),
+            pa.field("name", pa.string()),
+            
+            # 3种embedding字段 - 使用动态维度
+            pa.field("content_embedding", pa.list_(pa.float32(), embedding_dim)),
+            pa.field("name_embedding", pa.list_(pa.float32(), embedding_dim)),
+            pa.field("natural_embedding", pa.list_(pa.float32(), embedding_dim)),
+            
+            # 函数完整metadata（基于functions_to_check的字段）
+            pa.field("content", pa.string()),
+            pa.field("natural_description", pa.string()),
+            pa.field("start_line", pa.int32()),
+            pa.field("end_line", pa.int32()),
+            pa.field("relative_file_path", pa.string()),
+            pa.field("absolute_file_path", pa.string()),
+            pa.field("contract_name", pa.string()),
+            pa.field("contract_code", pa.string()),
+            pa.field("modifiers", pa.list_(pa.string())),
+            pa.field("visibility", pa.string()),
+            pa.field("state_mutability", pa.string()),
+            pa.field("function_name_only", pa.string()),
+            pa.field("full_name", pa.string())
+        ])
         
-        # 2种embedding字段 - 使用动态维度
-        pa.field("content_embedding", pa.list_(pa.float32(), embedding_dim)),
-        pa.field("natural_embedding", pa.list_(pa.float32(), embedding_dim)),
+        # 文件级别表schema（包含2种embedding）
+        self.schema_file = pa.schema([
+            # 基本标识字段
+            pa.field("id", pa.string()),
+            pa.field("file_path", pa.string()),
+            
+            # 2种embedding字段 - 使用动态维度
+            pa.field("content_embedding", pa.list_(pa.float32(), embedding_dim)),
+            pa.field("natural_embedding", pa.list_(pa.float32(), embedding_dim)),
+            
+            # 文件完整metadata
+            pa.field("file_content", pa.string()),
+            pa.field("natural_description", pa.string()),
+            pa.field("relative_file_path", pa.string()),
+            pa.field("absolute_file_path", pa.string()),
+            pa.field("file_length", pa.int32()),
+            pa.field("functions_count", pa.int32()),
+            pa.field("functions_list", pa.list_(pa.string())),
+            pa.field("file_extension", pa.string())
+        ])
         
-        # 文件完整metadata
-        pa.field("file_content", pa.string()),
-        pa.field("natural_description", pa.string()),
-        pa.field("relative_file_path", pa.string()),
-        pa.field("absolute_file_path", pa.string()),
-        pa.field("file_length", pa.int32()),
-        pa.field("functions_count", pa.int32()),
-        pa.field("functions_list", pa.list_(pa.string())),
-        pa.field("file_extension", pa.string())
-    ])
-    
-    # 文档块级别表schema（包含2种embedding）
-    self.schema_chunk = pa.schema([
-        # 基本标识字段
-        pa.field("id", pa.string()),
-        pa.field("chunk_id", pa.string()),
-        
-        # 2种embedding字段 - 使用动态维度
-        pa.field("content_embedding", pa.list_(pa.float32(), embedding_dim)),
-        pa.field("natural_embedding", pa.list_(pa.float32(), embedding_dim)),
-        
-        # 文档块完整metadata
-        pa.field("chunk_text", pa.string()),
-        pa.field("natural_description", pa.string()),
-        pa.field("original_file", pa.string()),
-        pa.field("chunk_order", pa.int32()),
-        pa.field("parent_doc_id", pa.string()),
-        pa.field("chunk_size", pa.int32()),
-        pa.field("file_name", pa.string()),
-        pa.field("file_path", pa.string()),
-        pa.field("file_extension", pa.string()),
-        pa.field("metadata", pa.string())
-    ])
+        # 文档块级别表schema（包含2种embedding）
+        self.schema_chunk = pa.schema([
+            # 基本标识字段
+            pa.field("id", pa.string()),
+            pa.field("chunk_id", pa.string()),
+            
+            # 2种embedding字段 - 使用动态维度
+            pa.field("content_embedding", pa.list_(pa.float32(), embedding_dim)),
+            pa.field("natural_embedding", pa.list_(pa.float32(), embedding_dim)),
+            
+            # 文档块完整metadata
+            pa.field("chunk_text", pa.string()),
+            pa.field("natural_description", pa.string()),
+            pa.field("original_file", pa.string()),
+            pa.field("chunk_order", pa.int32()),
+            pa.field("parent_doc_id", pa.string()),
+            pa.field("chunk_size", pa.int32()),
+            pa.field("file_name", pa.string()),
+            pa.field("file_path", pa.string()),
+            pa.field("file_extension", pa.string()),
+            pa.field("metadata", pa.string())
+        ])
         
     def _table_exists(self, table_name: str) -> bool:
         """检查指定表是否存在"""
