@@ -8,5 +8,5 @@
     "comprehensive_vulnerability_analysis": "deepseek-reasoner",
     "final_vulnerability_extraction": "deepseek-chat",
     "structured_json_extraction": "deepseek-chat",
-    "embedding_model": "text-embedding-3-large"
+    "embedding_model": "deepseek-embedding"
 }
