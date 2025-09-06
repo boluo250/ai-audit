@@ -4,6 +4,8 @@ import re
 import numpy as np
 import requests
 from openai import OpenAI
+from transformers import AutoTokenizer, AutoModel
+import torch
 
 # 全局模型配置缓存
 _model_config = None
@@ -255,35 +257,88 @@ def ask_deepseek(prompt):
 def clean_text(text: str) -> str:
     return str(text).replace(" ", "").replace("\n", "").replace("\r", "")
 
+# 全局模型实例，避免重复加载
+_embedding_model = None
+_embedding_tokenizer = None
+
+def get_embedding_model():
+    """获取embedding模型实例（单例模式）"""
+    global _embedding_model, _embedding_tokenizer
+    if _embedding_model is None:
+        try:
+            # 使用超轻量级模型
+            model_name = os.getenv('EMBEDDING_MODEL_NAME', 'sentence-transformers/all-MiniLM-L6-v2')
+            print(f" 正在加载轻量级embedding模型: {model_name}")
+            
+            # 设置环境变量减少内存占用
+            os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+            
+            # 加载tokenizer和模型
+            _embedding_tokenizer = AutoTokenizer.from_pretrained(
+                model_name,
+                cache_dir='./models'  # 指定缓存目录
+            )
+            _embedding_model = AutoModel.from_pretrained(
+                model_name,
+                cache_dir='./models'  # 指定缓存目录
+            )
+            
+            # 设置为评估模式，减少内存占用
+            _embedding_model.eval()
+            
+            # 强制使用CPU，避免GPU内存占用
+            _embedding_model = _embedding_model.to('cpu')
+            
+            print(f"✅ 轻量级embedding模型加载完成")
+            print(f"   模型维度: {_embedding_model.config.hidden_size}")
+            
+        except Exception as e:
+            print(f"❌ 模型加载失败: {e}")
+            raise e
+    return _embedding_model, _embedding_tokenizer
+
 def common_get_embedding(text: str):
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is not set")
-
-    api_base = os.getenv('OPENAI_API_BASE', 'api.openai.com')
-    model = get_model("embedding_model")
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    cleaned_text = clean_text(text)
-    
-    data = {
-        "input": cleaned_text,
-        "model": model,
-        "encoding_format": "float"
-    }
-
+    """使用Hugging Face Transformers生成embedding"""
     try:
-        response = requests.post(f'https://{api_base}/v1/embeddings', json=data, headers=headers)
-        response.raise_for_status()
-        embedding_data = response.json()
-        return embedding_data['data'][0]['embedding']
-    except requests.exceptions.RequestException as e:
-        print(f"Error: {e}")
-        return list(np.zeros(3072))  # 返回长度为3072的全0数组
+        # 获取模型和tokenizer
+        model, tokenizer = get_embedding_model()
+        
+        # 文本预处理
+        cleaned_text = clean_text(text)
+        
+        # 限制文本长度，减少内存占用
+        if len(cleaned_text) > 1000:
+            cleaned_text = cleaned_text[:1000]
+            print(f"⚠️ 文本过长，已截断到1000字符")
+        
+        # 编码文本
+        inputs = tokenizer(
+            cleaned_text, 
+            return_tensors='pt', 
+            truncation=True, 
+            padding=True, 
+            max_length=512
+        )
+        
+        # 生成embedding
+        with torch.no_grad():
+            outputs = model(**inputs)
+            # 使用[CLS] token的embedding
+            embedding = outputs.last_hidden_state[:, 0, :].squeeze()
+        
+        # 转换为列表格式
+        return embedding.tolist()
+        
+    except Exception as e:
+        print(f"❌ 本地embedding生成失败: {e}")
+        # 获取模型维度作为fallback
+        try:
+            model, _ = get_embedding_model()
+            model_dim = model.config.hidden_size
+            return list(np.zeros(model_dim))
+        except:
+            # 如果连模型都无法获取，返回默认维度
+            return list(np.zeros(384))  # all-MiniLM-L6-v2的默认维度
 
 
 # ========== 漏洞检测多轮分析专用函数 ==========
@@ -298,149 +353,253 @@ def perform_initial_vulnerability_validation(prompt):
     api_base = os.environ.get('OPENAI_API_BASE', '4.0.wokaai.com')
     
     headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {api_key}'
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
     }
-
+    
     data = {
-        'model': model,
-        'messages': [
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ]
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 4000
     }
-
+    
     try:
-        response = requests.post(f'https://{api_base}/v1/chat/completions', 
-                               headers=headers, 
-                               json=data)
+        response = requests.post(f'https://{api_base}/v1/chat/completions', json=data, headers=headers)
         response.raise_for_status()
-        response_data = response.json()
-        if 'choices' in response_data and len(response_data['choices']) > 0:
-            return response_data['choices'][0]['message']['content']
-        else:
-            return ""
+        return response.json()['choices'][0]['message']['content']
     except requests.exceptions.RequestException as e:
-        print(f"代理初始分析API调用失败。错误: {str(e)}")
-        return ""
+        print(f"Error: {e}")
+        return "API调用失败"
 
-
-def extract_vulnerability_findings_json(prompt):
+def perform_comprehensive_vulnerability_analysis(prompt):
     """
-    代理JSON提取 - 从自然语言中提取结构化JSON
-    环境变量: AGENT_JSON_MODEL (默认: gpt-4o-mini)
+    执行综合漏洞分析
+    环境变量: COMPREHENSIVE_ANALYSIS_MODEL (默认: claude-3-sonnet-20240229)
     """
-    model = get_model('vulnerability_findings_json_extraction')
+    model = get_model('comprehensive_vulnerability_analysis')
     api_key = os.environ.get('OPENAI_API_KEY')
     api_base = os.environ.get('OPENAI_API_BASE', '4.0.wokaai.com')
     
     headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {api_key}'
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
     }
-
+    
     data = {
-        'model': model,
-        'messages': [
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ]
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 4000
     }
-
+    
     try:
-        response = requests.post(f'https://{api_base}/v1/chat/completions', 
-                               headers=headers, 
-                               json=data)
+        response = requests.post(f'https://{api_base}/v1/chat/completions', json=data, headers=headers)
         response.raise_for_status()
-        response_data = response.json()
-        if 'choices' in response_data and len(response_data['choices']) > 0:
-            return response_data['choices'][0]['message']['content']
-        else:
-            return ""
+        return response.json()['choices'][0]['message']['content']
     except requests.exceptions.RequestException as e:
-        print(f"代理JSON提取API调用失败。错误: {str(e)}")
-        return ""
+        print(f"Error: {e}")
+        return "API调用失败"
 
-
-def determine_additional_context_needed(prompt):
+def perform_additional_context_determination(prompt):
     """
-    代理信息查询 - 确定需要什么类型的额外信息
-    环境变量: AGENT_INFO_QUERY_MODEL (默认: claude-3-sonnet-20240229)
+    执行额外上下文确定
+    环境变量: ADDITIONAL_CONTEXT_MODEL (默认: claude-3-haiku-20240307)
     """
     model = get_model('additional_context_determination')
     api_key = os.environ.get('OPENAI_API_KEY')
     api_base = os.environ.get('OPENAI_API_BASE', '4.0.wokaai.com')
     
     headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {api_key}'
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
     }
-
+    
     data = {
-        'model': model,
-        'messages': [
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ]
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 2000
     }
-
+    
     try:
-        response = requests.post(f'https://{api_base}/v1/chat/completions', 
-                               headers=headers, 
-                               json=data)
+        response = requests.post(f'https://{api_base}/v1/chat/completions', json=data, headers=headers)
         response.raise_for_status()
-        response_data = response.json()
-        if 'choices' in response_data and len(response_data['choices']) > 0:
-            return response_data['choices'][0]['message']['content']
-        else:
-            return ""
+        return response.json()['choices'][0]['message']['content']
     except requests.exceptions.RequestException as e:
-        print(f"代理信息查询API调用失败。错误: {str(e)}")
-        return ""
+        print(f"Error: {e}")
+        return "API调用失败"
 
-
-
-
-def perform_comprehensive_vulnerability_analysis(prompt):
+def perform_final_vulnerability_extraction(prompt):
     """
-    代理最终分析 - 基于所有收集的信息做最终判断
-    环境变量: AGENT_FINAL_MODEL (默认: claude-opus-4-20250514)
+    执行最终漏洞提取
+    环境变量: FINAL_EXTRACTION_MODEL (默认: gpt-4o-mini)
     """
-    model = get_model('comprehensive_vulnerability_analysis')
+    model = get_model('final_vulnerability_extraction')
     api_key = os.environ.get('OPENAI_API_KEY')
     api_base = os.environ.get('OPENAI_API_BASE', '4.0.wokaai.com')
-
+    
     headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {api_key}'
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
     }
-
+    
     data = {
-        'model': model,
-        'messages': [
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ]
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 2000
     }
-
+    
     try:
-        response = requests.post(f'https://{api_base}/v1/chat/completions', 
-                               headers=headers, 
-                               json=data)
+        response = requests.post(f'https://{api_base}/v1/chat/completions', json=data, headers=headers)
         response.raise_for_status()
-        response_data = response.json()
-        if 'choices' in response_data and len(response_data['choices']) > 0:
-            return response_data['choices'][0]['message']['content']
-        else:
-            return ""
+        return response.json()['choices'][0]['message']['content']
     except requests.exceptions.RequestException as e:
-        print(f"代理最终分析API调用失败。错误: {str(e)}")
-        return ""
+        print(f"Error: {e}")
+        return "API调用失败"
+
+def perform_vulnerability_findings_json_extraction(prompt):
+    """
+    执行漏洞发现JSON提取
+    环境变量: VULNERABILITY_FINDINGS_MODEL (默认: gpt-4o-mini)
+    """
+    model = get_model('vulnerability_findings_json_extraction')
+    api_key = os.environ.get('OPENAI_API_KEY')
+    api_base = os.environ.get('OPENAI_API_BASE', '4.0.wokaai.com')
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 2000
+    }
+    
+    try:
+        response = requests.post(f'https://{api_base}/v1/chat/completions', json=data, headers=headers)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content']
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return "API调用失败"
+
+def ask_openai_for_json(prompt: str) -> dict:
+    """
+    调用OpenAI API获取JSON响应
+    环境变量: OPENAI_GENERAL_MODEL (默认: gpt-4.1)
+    """
+    model = get_model('openai_general')
+    api_key = os.environ.get('OPENAI_API_KEY')
+    api_base = os.environ.get('OPENAI_API_BASE', '4.0.wokaai.com')
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 4000
+    }
+    
+    try:
+        response = requests.post(f'https://{api_base}/v1/chat/completions', json=data, headers=headers)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content']
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return "API调用失败"
+
+def detect_vulnerabilities(prompt: str) -> str:
+    """
+    检测漏洞
+    环境变量: VULNERABILITY_DETECTION_MODEL (默认: claude-sonnet-4-20250514)
+    """
+    model = get_model('vulnerability_detection')
+    api_key = os.environ.get('OPENAI_API_KEY')
+    api_base = os.environ.get('OPENAI_API_BASE', '4.0.wokaai.com')
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 4000
+    }
+    
+    try:
+        response = requests.post(f'https://{api_base}/v1/chat/completions', json=data, headers=headers)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content']
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return "API调用失败"
+
+def analyze_code_assumptions(prompt: str) -> str:
+    """
+    分析代码假设
+    环境变量: CODE_ASSUMPTIONS_MODEL (默认: claude-sonnet-4-20250514)
+    """
+    model = get_model('code_assumptions_analysis')
+    api_key = os.environ.get('OPENAI_API_KEY')
+    api_base = os.environ.get('OPENAI_API_BASE', '4.0.wokaai.com')
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 4000
+    }
+    
+    try:
+        response = requests.post(f'https://{api_base}/v1/chat/completions', json=data, headers=headers)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content']
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return "API调用失败"
+
+def extract_structured_json(prompt: str) -> dict:
+    """
+    提取结构化JSON
+    环境变量: STRUCTURED_JSON_MODEL (默认: gpt-4.1)
+    """
+    model = get_model('structured_json_extraction')
+    api_key = os.environ.get('OPENAI_API_KEY')
+    api_base = os.environ.get('OPENAI_API_BASE', '4.0.wokaai.com')
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 4000
+    }
+    
+    try:
+        response = requests.post(f'https://{api_base}/v1/chat/completions', json=data, headers=headers)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content']
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return "API调用失败"
