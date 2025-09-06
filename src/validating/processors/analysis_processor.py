@@ -484,7 +484,6 @@ class AnalysisProcessor:
     def _execute_single_detection_round(self, vulnerability_result, business_flow_code, task, round_num, logs):
         """执行单轮检测流程"""
         from openai_api.openai import (perform_initial_vulnerability_validation,
-                                       determine_additional_context_needed,
                                        perform_comprehensive_vulnerability_analysis)
         from prompt_factory.vul_check_prompt import VulCheckPrompt
         
